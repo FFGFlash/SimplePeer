@@ -1,22 +1,42 @@
 {
   "name": "simplepeer",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsup"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "peer-to-peer",
+    "p2p",
+    "WebRTC",
+    "Browser",
+    "RTCPeerConnection"
+  ],
+  "author": "Drake Taylor",
+  "license": "MIT",
   "devDependencies": {
     "@types/debug": "^4.1.12",
     "@types/node": "^20.11.19",
     "ts-node": "^10.9.2",
+    "tsup": "^8.0.2",
     "typescript": "^5.3.3"
   },
   "dependencies": {
     "debug": "^4.3.4",
     "eventemitter3": "^5.0.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FFGFlash/SimplePeer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FFGFlash/SimplePeer/issues"
+  },
+  "homepage": "https://github.com/FFGFlash/SimplePeer#readme",
+  "description": "A package for simplifying peer-2-peer communication."
 }

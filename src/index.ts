@@ -12,7 +12,7 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   #streams: Record<string, { name?: string; stream?: MediaStream }> = {}
   #streamQueue: { name: string; stream: MediaStream }[] = []
 
-  constructor(options: RTCConfiguration) {
+  constructor(options: RTCConfiguration = {}) {
     super()
     this.#options = options
   }
