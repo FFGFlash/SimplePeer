@@ -117,3 +117,9 @@ function start() {
   peer.open()
 }
 ```
+
+### Putting It All Together
+
+Click [here](https://codepen.io/FFGFlash/pen/ExMzZVG) for an interactive example where we put everything into practice.
+
+Open the example in two tabs and press connect to try everything out.
