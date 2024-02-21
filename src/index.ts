@@ -110,7 +110,7 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   }
 
   get canSignal() {
-    return this.#sc != null && this.#sc.readyState === 'open'
+    return this.isOpen && this.#sc != null && this.#sc.readyState === 'open'
   }
 
   emit<T extends keyof PeerEvents>(
