@@ -3,6 +3,14 @@ import EventEmitter from 'eventemitter3'
 
 const log = debug('simple-peer')
 
+function dequeue<T>(
+  array: T[],
+  callbackfn: (value: T, index: number, array: T[]) => void,
+  thisArg?: any
+) {
+  array.splice(0, array.length).forEach(callbackfn, thisArg)
+}
+
 export default class SimplePeer extends EventEmitter<PeerEvents> {
   #pc!: RTCPeerConnection
   #options: RTCConfiguration
@@ -11,10 +19,19 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   #candidates: RTCIceCandidateInit[] = []
   #streams: Record<string, { name?: string; stream?: MediaStream }> = {}
   #streamQueue: { name: string; stream: MediaStream }[] = []
+  #channelQueue: string[] = []
 
   constructor(options: RTCConfiguration = {}) {
     super()
     this.#options = options
+  }
+
+  createDataChannel(label: string) {
+    if (!this.isOpen) {
+      this.#channelQueue.push(label)
+      return
+    }
+    this.handleDataChannel(this.#pc.createDataChannel(label))
   }
 
   open() {
@@ -149,12 +166,10 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   private handleSignalingStateChange(state: RTCSignalingState) {
     this.emit('signaling-state-change', state)
     if (state !== 'stable') return
-    this.#streamQueue
-      .splice(0, this.#streamQueue.length)
-      .forEach(({ name, stream }) => {
-        this.handleAddStream(stream, true)
-        this.sendSignal({ type: 'stream', id: stream.id, name })
-      })
+    dequeue(this.#streamQueue, ({ name, stream }) => {
+      this.handleAddStream(stream, true)
+      this.sendSignal({ type: 'stream', id: stream.id, name })
+    })
   }
 
   private async handleNegotiation() {
@@ -202,12 +217,14 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     peer.ondatachannel = ({ channel }) => this.handleDataChannel(channel)
     peer.ontrack = ({ track, streams }) =>
       this.handleAddStream(streams?.[0] ?? new MediaStream([track]))
-    this.#streamQueue
-      .splice(0, this.#streamQueue.length)
-      .forEach(({ name, stream }) => {
-        this.handleAddStream(stream, true)
-        this.sendSignal({ type: 'stream', id: stream.id, name })
-      })
+
+    dequeue(this.#streamQueue, ({ name, stream }) => {
+      this.handleAddStream(stream, true)
+      this.sendSignal({ type: 'stream', id: stream.id, name })
+    })
+    dequeue(this.#channelQueue, label =>
+      this.handleDataChannel(this.#pc.createDataChannel(label))
+    )
   }
 }
 
