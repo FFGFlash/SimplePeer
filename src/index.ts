@@ -1,7 +1,11 @@
 import debug from 'debug'
 import EventEmitter from 'eventemitter3'
+import { v4 } from 'uuid'
 
-const log = debug('simple-peer')
+const logSignaling = debug('simple-peer:signaling')
+const logEvents = debug('simple-peer:events')
+const logStreaming = debug('simple-peer:streaming')
+const logChannels = debug('simple-peer:channels')
 
 function dequeue<T>(
   array: T[],
@@ -20,6 +24,12 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   #streams: Record<string, { name?: string; stream?: MediaStream }> = {}
   #streamQueue: { name: string; stream: MediaStream }[] = []
   #channelQueue: string[] = []
+  #id!: string
+  #polite = false
+  #ignoringOffer = false
+  #makingOffer = false
+  #isSettingRemoteAnswerPending = false
+  static #idGenerator: (peer: SimplePeer) => string = () => v4()
 
   constructor(options: RTCConfiguration = {}) {
     super()
@@ -28,14 +38,29 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
 
   createDataChannel(label: string) {
     if (!this.isOpen) {
+      logChannels('>> %s enqueued', label)
       this.#channelQueue.push(label)
       return
     }
+    return this.#createDataChannel(label)
+  }
+
+  #createDataChannel(label: string) {
+    logChannels('** %s created', label)
     this.handleDataChannel(this.#pc.createDataChannel(label))
+  }
+
+  get id() {
+    return this.#id
+  }
+
+  static setIDGenerator(generator: (peer: SimplePeer) => string) {
+    this.#idGenerator = generator
   }
 
   open() {
     if (this.isOpen) return
+    this.#id = SimplePeer.#idGenerator(this)
     this.createConnection()
     this.emit('connection-state-change', this.#pc.connectionState)
     this.emit('signaling-state-change', this.#pc.signalingState)
@@ -57,18 +82,33 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.#pc.close()
     this.emit('connection-state-change', this.#pc.connectionState)
     this.emit('signaling-state-change', this.#pc.signalingState)
+    this.#negotiated = false
+    this.#channelQueue = []
+    this.#candidates = []
+    this.#streamQueue = []
+    this.#streams = {}
+    this.#ignoringOffer = false
+    this.#makingOffer = false
+    this.#isSettingRemoteAnswerPending = false
   }
 
   addStream(name: string, stream: MediaStream) {
     if (!this.stable) {
+      logStreaming('>> %s (%s) enqueued', name, stream.id)
       this.#streamQueue.push({ name, stream })
       return
     }
+    return this.#addStream(name, stream)
+  }
+
+  #addStream(name: string, stream: MediaStream) {
+    logStreaming('>> Added %s (%s)', name, stream.id)
     this.handleAddStream(stream, true)
     this.sendSignal({ type: 'stream', id: stream.id, name })
   }
 
   removeStream(stream: MediaStream) {
+    if (!this.isOpen) return
     this.handleRemoveStream(stream, true)
   }
 
@@ -83,11 +123,15 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       (this.#streams[newStream.id] ??= {}),
       { stream: newStream }
     )
-    if (name && stream) this.emit('add-stream', name, stream)
+    if (name && stream) {
+      logStreaming('<< Added %s (%s)', name, stream.id)
+      this.emit('add-stream', name, stream)
+    }
   }
 
   private handleRemoveStream(stream: MediaStream, local = false) {
     if (local) {
+      logStreaming('>> Removed %s', stream.id)
       const senders = this.#pc.getSenders()
       stream.getTracks().forEach(track => {
         track.stop()
@@ -97,8 +141,17 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       })
       return
     }
+    logStreaming('<< Removed %s', stream.id)
     delete this.#streams[stream.id]
     this.emit('remove-stream', stream.id)
+  }
+
+  get streams() {
+    return Object.values(this.#streams)
+  }
+
+  get streamNames() {
+    return this.streams.map(({ name }) => name)
   }
 
   get isOpen() {
@@ -113,35 +166,57 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     return this.isOpen && this.#sc != null && this.#sc.readyState === 'open'
   }
 
+  get isPolite() {
+    return this.#polite
+  }
+
   emit<T extends keyof PeerEvents>(
     event: T,
     ...args: EventEmitter.ArgumentMap<PeerEvents>[Extract<T, keyof PeerEvents>]
   ): boolean {
-    log('** %s %o', event, args)
+    logEvents('** %s %o', event, args)
     return super.emit(event, ...args)
   }
 
+  private get readyForOffer() {
+    return (
+      !this.#makingOffer && (this.stable || this.#isSettingRemoteAnswerPending)
+    )
+  }
+
   async handleSignal(signal: PeerSignal) {
-    log('<< %o', signal)
+    logSignaling('<< %s %O', signal.type, signal)
     switch (signal.type) {
-      case 'offer': {
-        if (!this.isOpen) this.createConnection()
+      case 'offer':
+        if (!this.isOpen) this.createConnection(true)
+      case 'answer':
+        this.#ignoringOffer =
+          !this.#polite && signal.type === 'offer' && !this.readyForOffer
+        if (this.#ignoringOffer) return
+        this.#isSettingRemoteAnswerPending = signal.type === 'answer'
         await this.#pc.setRemoteDescription(signal)
-        const answer = await this.#pc.createAnswer()
-        await this.#pc.setLocalDescription(answer)
-        this.sendSignal(this.#pc.localDescription!.toJSON())
-        const candidates = this.#candidates.splice(0, this.#candidates.length)
-        for (const candidate of candidates)
-          await this.#pc.addIceCandidate(candidate)
+        this.#isSettingRemoteAnswerPending = false
+        if (signal.type === 'offer') {
+          await this.#pc.setLocalDescription()
+          this.sendSignal(this.#pc.localDescription!.toJSON())
+          const candidates = this.#candidates.splice(0, this.#candidates.length)
+          for (const candidate of candidates) {
+            try {
+              await this.#pc.addIceCandidate(candidate)
+            } catch (err) {
+              if (!this.#ignoringOffer) throw err
+            }
+          }
+        }
         break
-      }
-      case 'answer': {
-        await this.#pc.setRemoteDescription(signal)
-        break
-      }
       case 'candidate': {
-        if (this.#pc) await this.#pc.addIceCandidate(signal.candidate)
-        else this.#candidates.push(signal.candidate)
+        if (this.#pc) {
+          try {
+            await this.#pc.addIceCandidate(signal.candidate)
+          } catch (err) {
+            if (!this.#ignoringOffer) throw err
+          }
+        } else this.#candidates.push(signal.candidate)
         break
       }
       case 'stream': {
@@ -156,6 +231,10 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
         this.handleClose()
         break
       }
+      case 'identifier': {
+        this.#id = signal.id
+        break
+      }
     }
   }
 
@@ -167,23 +246,31 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.emit('signaling-state-change', state)
     if (state !== 'stable') return
     dequeue(this.#streamQueue, ({ name, stream }) => {
-      this.handleAddStream(stream, true)
-      this.sendSignal({ type: 'stream', id: stream.id, name })
+      logStreaming('<< %s (%s) dequeued', name, stream.id)
+      this.#addStream(name, stream)
     })
   }
 
   private async handleNegotiation() {
-    this.#negotiated = true
-    const offer = await this.#pc.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true,
-    })
-    await this.#pc.setLocalDescription(offer)
-    this.sendSignal(this.#pc.localDescription!.toJSON())
+    try {
+      this.#negotiated = true
+      this.#makingOffer = true
+      // const offer = await this.#pc.createOffer({
+      //   offerToReceiveAudio: true,
+      //   offerToReceiveVideo: true,
+      // })
+      // if (!this.stable) return
+      await this.#pc.setLocalDescription()
+      this.sendSignal(this.#pc.localDescription!.toJSON())
+    } catch (err) {
+      throw err
+    } finally {
+      this.#makingOffer = false
+    }
   }
 
   private sendSignal(signal: PeerSignal) {
-    log('>> %o %s', signal, this.canSignal)
+    logSignaling('>> %s %O', signal.type, signal)
     if (this.canSignal) return this.#sc.send(JSON.stringify(signal))
     this.emit('signal', signal)
   }
@@ -195,6 +282,7 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   private handleDataChannel(channel: RTCDataChannel) {
     if (channel.label !== 'simple-signaling')
       return this.emit('data-channel', channel)
+    logSignaling('** Signaling Channel Connected')
     this.#sc = channel
     channel.onclosing =
       channel.onopen =
@@ -203,7 +291,14 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     channel.onmessage = ({ data }) => this.handleSignal(JSON.parse(data))
   }
 
-  private createConnection() {
+  private handleIceConnectionStateChange(state: RTCIceConnectionState) {
+    this.emit('ice-connection-state-change', state)
+    if (state !== 'failed') return
+    this.#pc.restartIce()
+  }
+
+  private createConnection(polite: boolean = false) {
+    this.#polite = polite
     const peer = (this.#pc = new RTCPeerConnection(this.#options))
     peer.onconnectionstatechange = () =>
       this.handleConnectionStateChange(peer.connectionState)
@@ -215,24 +310,35 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       this.sendSignal({ type: 'candidate', candidate: candidate.toJSON() })
     }
     peer.ondatachannel = ({ channel }) => this.handleDataChannel(channel)
-    peer.ontrack = ({ track, streams }) =>
-      this.handleAddStream(streams?.[0] ?? new MediaStream([track]))
+    peer.ontrack = ({ track, streams }) => {
+      const stream = streams?.[0]
+      if (stream)
+        track.onunmute = () => {
+          if (this.#streams[stream.id]?.stream) return
+          this.handleAddStream(stream)
+        }
+      else this.handleAddStream(new MediaStream([track]))
+    }
+    peer.oniceconnectionstatechange = () =>
+      this.handleIceConnectionStateChange(peer.iceConnectionState)
 
     dequeue(this.#streamQueue, ({ name, stream }) => {
-      this.handleAddStream(stream, true)
-      this.sendSignal({ type: 'stream', id: stream.id, name })
+      logStreaming('<< %s (%s) dequeued', name, stream.id)
+      this.#addStream(name, stream)
     })
-    dequeue(this.#channelQueue, label =>
-      this.handleDataChannel(this.#pc.createDataChannel(label))
-    )
+    dequeue(this.#channelQueue, label => {
+      logChannels('>> %s dequeued', label)
+      this.#createDataChannel(label)
+    })
   }
 }
 
 export type PeerSignal =
-  | RTCSessionDescriptionInit
+  | { type: Exclude<RTCSdpType, 'rollback'>; sdp?: string }
   | { type: 'candidate'; candidate: RTCIceCandidateInit }
   | { type: 'stream'; name: string; id: string }
   | { type: 'close' }
+  | { type: 'identifier'; id: string }
 
 export interface PeerEvents {
   'signal': (signal: PeerSignal) => void
@@ -242,4 +348,5 @@ export interface PeerEvents {
   'connection-state-change': (state: RTCPeerConnectionState) => void
   'add-stream': (name: string, stream: MediaStream) => void
   'remove-stream': (id: string) => void
+  'ice-connection-state-change': (state: RTCIceConnectionState) => void
 }

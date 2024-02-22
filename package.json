@@ -22,13 +22,15 @@
   "devDependencies": {
     "@types/debug": "^4.1.12",
     "@types/node": "^20.11.19",
+    "@types/uuid": "^9.0.8",
     "ts-node": "^10.9.2",
     "tsup": "^8.0.2",
     "typescript": "^5.3.3"
   },
   "dependencies": {
     "debug": "^4.3.4",
-    "eventemitter3": "^5.0.1"
+    "eventemitter3": "^5.0.1",
+    "uuid": "^9.0.1"
   },
   "repository": {
     "type": "git",
