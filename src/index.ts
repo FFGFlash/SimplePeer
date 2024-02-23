@@ -74,8 +74,8 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
 
   close() {
     if (!this.isOpen) return
-    this.handleClose()
     this.sendSignal({ type: 'close' })
+    this.handleClose()
   }
 
   private handleClose() {
