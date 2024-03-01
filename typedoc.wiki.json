@@ -1,7 +1,7 @@
 {
   "$schema": "https://typedoc.org/schema.json",
   "entryPoints": ["./src/index.ts"],
-  "out": "./docs",
+  "out": "./wiki",
   "plugin": ["typedoc-plugin-markdown", "typedoc-github-wiki-theme"],
   "cleanOutputDir": false
 }

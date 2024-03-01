@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "tsup",
-    "build:docs": "typedoc"
+    "build:wiki": "typedoc --options typedoc.wiki.json",
+    "build:docs": "typedoc --options typedoc.docs.json"
   },
   "keywords": [
     "peer-to-peer",
@@ -28,6 +29,7 @@
     "tsup": "^8.0.2",
     "typedoc": "^0.25.9",
     "typedoc-github-wiki-theme": "^1.1.0",
+    "typedoc-material-theme": "^1.0.2",
     "typedoc-plugin-markdown": "^3.17.1",
     "typescript": "^5.3.3"
   },
