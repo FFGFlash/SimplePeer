@@ -1,6 +1,6 @@
 {
-  "name": "ffg-simple-peer",
-  "version": "3.0.0",
+  "name": "@ffgflash/simple-peer",
+  "version": "1.0.0",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
