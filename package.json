@@ -8,7 +8,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "build:docs": "typedoc"
   },
   "keywords": [
     "peer-to-peer",
@@ -25,6 +26,9 @@
     "@types/uuid": "^9.0.8",
     "ts-node": "^10.9.2",
     "tsup": "^8.0.2",
+    "typedoc": "^0.25.9",
+    "typedoc-github-wiki-theme": "^1.1.0",
+    "typedoc-plugin-markdown": "^3.17.1",
     "typescript": "^5.3.3"
   },
   "dependencies": {
