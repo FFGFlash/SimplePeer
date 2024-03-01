@@ -15,9 +15,13 @@ function dequeue<T>(
   array.splice(0, array.length).forEach(callbackfn, thisArg)
 }
 
+export interface SimplePeerOptions {
+  rtc?: RTCConfiguration
+  answerTimeout?: number
+}
+
 export default class SimplePeer extends EventEmitter<PeerEvents> {
   #pc!: RTCPeerConnection
-  #options: RTCConfiguration
   #negotiated: boolean = false
   #sc!: RTCDataChannel
   #candidates: RTCIceCandidateInit[] = []
@@ -25,15 +29,20 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   #streamQueue: { name: string; stream: MediaStream }[] = []
   #channelQueue: string[] = []
   #id!: string
+  #answerTimeout?: NodeJS.Timeout
   #polite = false
   #ignoringOffer = false
   #makingOffer = false
   #isSettingRemoteAnswerPending = false
+  #options
   static #idGenerator: (peer: SimplePeer) => string = () => v4()
 
-  constructor(options: RTCConfiguration = {}) {
+  constructor(options?: SimplePeerOptions) {
     super()
-    this.#options = options
+    this.#options = {
+      answerTimeout: options?.answerTimeout ?? 5000,
+      rtc: options?.rtc,
+    }
   }
 
   createDataChannel(label: string) {
@@ -193,6 +202,7 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
         this.#ignoringOffer =
           !this.#polite && signal.type === 'offer' && !this.readyForOffer
         if (this.#ignoringOffer) return
+        this.stopAnswerTimeout()
         this.#isSettingRemoteAnswerPending = signal.type === 'answer'
         await this.#pc.setRemoteDescription(signal)
         this.#isSettingRemoteAnswerPending = false
@@ -251,6 +261,21 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     })
   }
 
+  private startAnswerTimeout() {
+    this.stopAnswerTimeout()
+    if (!this.#options?.answerTimeout) return
+    this.#answerTimeout = setTimeout(
+      () => this.close(),
+      this.#options.answerTimeout
+    )
+  }
+
+  private stopAnswerTimeout() {
+    if (!this.#answerTimeout) return
+    clearTimeout(this.#answerTimeout)
+    this.#answerTimeout = undefined
+  }
+
   private async handleNegotiation() {
     try {
       this.#negotiated = true
@@ -262,6 +287,7 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       // if (!this.stable) return
       await this.#pc.setLocalDescription()
       this.sendSignal(this.#pc.localDescription!.toJSON())
+      this.startAnswerTimeout()
     } catch (err) {
       throw err
     } finally {
@@ -299,7 +325,7 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
 
   private createConnection(polite: boolean = false) {
     this.#polite = polite
-    const peer = (this.#pc = new RTCPeerConnection(this.#options))
+    const peer = (this.#pc = new RTCPeerConnection(this.#options?.rtc))
     peer.onconnectionstatechange = () =>
       this.handleConnectionStateChange(peer.connectionState)
     peer.onsignalingstatechange = () =>

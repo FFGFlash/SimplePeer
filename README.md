@@ -1,8 +1,24 @@
 # Simple Peer
 
+- [Simple Peer](#simple-peer)
+  - [The Goal](#the-goal)
+  - [Options](#options)
+  - [Examples](#examples)
+    - [Signaling](#signaling)
+    - [Streaming Video](#streaming-video)
+    - [Sending Data](#sending-data)
+    - [Putting It All Together](#putting-it-all-together)
+
 ## The Goal
 
 The goal of this library is to make writing p2p code a breeze. Simply create your peers, use the signaling server of your choice and get to making live video calls and more!
+
+## Options
+
+- rtc?: RTCConfiguration
+  - RTC Configuration used when creating the RTCPeerConnection. [See MDN](https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/RTCPeerConnection#parameters).
+- answerTimeout?: number
+  - How long should we wait for an answer signal, if 0 then don't timeout. (default: 5000)
 
 ## Examples
 
