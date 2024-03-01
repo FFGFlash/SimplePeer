@@ -15,8 +15,18 @@ function dequeue<T>(
 }
 
 export interface SimplePeerOptions {
+  /**
+   * Configuration options for the RTCPeerConnection.
+   *
+   * {@link https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/RTCPeerConnection MDN Reference}
+   */
   rtc?: RTCConfiguration
-  answerTimeout?: number
+  /**
+   * Configure how long we should wait before giving up on a failed connection.
+   *
+   * If 0 is provided then never give up the connection.
+   */
+  timeout?: number
 }
 
 export default class SimplePeer extends EventEmitter<PeerEvents> {
@@ -26,36 +36,51 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   #candidates: RTCIceCandidateInit[] = []
   #streams: Record<string, { name?: string; stream?: MediaStream }> = {}
   #streamQueue: { name: string; stream: MediaStream }[] = []
-  #channelQueue: string[] = []
-  #answerTimeout?: NodeJS.Timeout
+  #channelQueue: { label: string; dataChannelDict?: RTCDataChannelInit }[] = []
+  #timeout?: NodeJS.Timeout
   #polite = false
   #ignoringOffer = false
   #makingOffer = false
   #isSettingRemoteAnswerPending = false
   #options
 
+  /**
+   * @param options
+   */
   constructor(options?: SimplePeerOptions) {
     super()
     this.#options = {
-      answerTimeout: options?.answerTimeout ?? 5000,
+      timeout: options?.timeout ?? 5000,
       rtc: options?.rtc,
     }
   }
 
-  createDataChannel(label: string) {
+  /**
+   * Creates a new data channel with the given label for streaming data across the WebRTC Connection.
+   *
+   * {@link https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createDataChannel MDN Reference}
+   * @param label
+   * @param dataChannelDict
+   * @returns
+   */
+  createDataChannel(label: string, dataChannelDict?: RTCDataChannelInit) {
     if (!this.isOpen) {
-      logChannels('>> %s enqueued', label)
-      this.#channelQueue.push(label)
+      logChannels('>> %s enqueued %o', label, dataChannelDict)
+      this.#channelQueue.push({ label, dataChannelDict })
       return
     }
-    return this.#createDataChannel(label)
+    return this.#createDataChannel(label, dataChannelDict)
   }
 
-  #createDataChannel(label: string) {
-    logChannels('** %s created', label)
-    this.handleDataChannel(this.#pc.createDataChannel(label))
+  #createDataChannel(label: string, dataChannelDict?: RTCDataChannelInit) {
+    logChannels('** %s created %o', label, dataChannelDict)
+    this.handleDataChannel(this.#pc.createDataChannel(label, dataChannelDict))
   }
 
+  /**
+   * Open the RTCPeerConnection and begin negotiation.
+   * @returns
+   */
   open() {
     if (this.isOpen) return
     this.createConnection()
@@ -69,6 +94,10 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     })
   }
 
+  /**
+   * Close the RTCPeerConnection
+   * @returns
+   */
   close() {
     if (!this.isOpen) return
     this.sendSignal({ type: 'close' })
@@ -89,6 +118,12 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.#isSettingRemoteAnswerPending = false
   }
 
+  /**
+   * Add a MediaStream to the RTCPeerConnection for streaming audio and video.
+   * @param name
+   * @param stream
+   * @returns
+   */
   addStream(name: string, stream: MediaStream) {
     if (!this.stable) {
       logStreaming('>> %s (%s) enqueued', name, stream.id)
@@ -104,6 +139,13 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.sendSignal({ type: 'stream', id: stream.id, name })
   }
 
+  /**
+   * Remove a MediaStream from the RTCPeerConnection.
+   *
+   * This will stop local and remote playback.
+   * @param stream
+   * @returns
+   */
   removeStream(stream: MediaStream) {
     if (!this.isOpen) return
     this.handleRemoveStream(stream, true)
@@ -143,26 +185,46 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.emit('remove-stream', stream.id)
   }
 
+  /**
+   * An array of incoming MediaStreams
+   */
   get streams() {
     return Object.values(this.#streams)
   }
 
+  /**
+   * An array of incoming MediaStream names
+   */
   get streamNames() {
     return this.streams.map(({ name }) => name)
   }
 
+  /**
+   * Whether the RTCPeerConnection's signalingState is not closed
+   */
   get isOpen() {
     return this.#pc != null && this.#pc.signalingState !== 'closed'
   }
 
+  /**
+   * Whether the RTCPeerConnection's signalingState is stable
+   */
   get stable() {
     return this.#pc != null && this.#pc.signalingState === 'stable'
   }
 
+  /**
+   * Whether the signaling channel's readyState is open
+   */
   get canSignal() {
     return this.isOpen && this.#sc != null && this.#sc.readyState === 'open'
   }
 
+  /**
+   * Whether the peer is polite
+   *
+   * If the peer is polite it will concede when a signal collision occurs
+   */
   get isPolite() {
     return this.#polite
   }
@@ -181,6 +243,11 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     )
   }
 
+  /**
+   * Processes the signals received from the signaling server.
+   * @param signal
+   * @returns
+   */
   async handleSignal(signal: PeerSignal) {
     logSignaling('<< %s %O', signal.type, signal)
     switch (signal.type) {
@@ -247,17 +314,14 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
 
   private startAnswerTimeout() {
     this.stopAnswerTimeout()
-    if (!this.#options?.answerTimeout) return
-    this.#answerTimeout = setTimeout(
-      () => this.close(),
-      this.#options.answerTimeout
-    )
+    if (!this.#options?.timeout) return
+    this.#timeout = setTimeout(() => this.close(), this.#options.timeout)
   }
 
   private stopAnswerTimeout() {
-    if (!this.#answerTimeout) return
-    clearTimeout(this.#answerTimeout)
-    this.#answerTimeout = undefined
+    if (!this.#timeout) return
+    clearTimeout(this.#timeout)
+    this.#timeout = undefined
   }
 
   private async handleNegotiation() {
@@ -336,9 +400,9 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       logStreaming('<< %s (%s) dequeued', name, stream.id)
       this.#addStream(name, stream)
     })
-    dequeue(this.#channelQueue, label => {
-      logChannels('>> %s dequeued', label)
-      this.#createDataChannel(label)
+    dequeue(this.#channelQueue, ({ label, dataChannelDict }) => {
+      logChannels('>> %s dequeued %o', label, dataChannelDict)
+      this.#createDataChannel(label, dataChannelDict)
     })
   }
 }
@@ -350,12 +414,53 @@ export type PeerSignal =
   | { type: 'close' }
 
 export interface PeerEvents {
+  /**
+   * Fired when a signal can't be transported internally via the signaling channel.
+   * @param signal
+   * @returns
+   */
   'signal': (signal: PeerSignal) => void
+  /**
+   * Fired when the signaling channel's readyState changes.
+   * @param state
+   * @returns
+   */
   'channel-state-change': (state: RTCDataChannelState) => void
+  /**
+   * Fired when a RTCDataChannel is created or received.
+   * @param channel
+   * @returns
+   */
   'data-channel': (channel: RTCDataChannel) => void
+  /**
+   * Fired when the RTCPeerConnection's signalingState changes.
+   * @param state
+   * @returns
+   */
   'signaling-state-change': (state: RTCSignalingState) => void
+  /**
+   * Fired when the RTCPeerConnection's connectionState changes.
+   * @param state
+   * @returns
+   */
   'connection-state-change': (state: RTCPeerConnectionState) => void
+  /**
+   * Fired when a MediaStream is received.
+   * @param name
+   * @param stream
+   * @returns
+   */
   'add-stream': (name: string, stream: MediaStream) => void
+  /**
+   * Fired when a received MediaStream is removed.
+   * @param id
+   * @returns
+   */
   'remove-stream': (id: string) => void
+  /**
+   * Fired when the RTCPeerConnection's iceConnectionState changes.
+   * @param state
+   * @returns
+   */
   'ice-connection-state-change': (state: RTCIceConnectionState) => void
 }
