@@ -1,5 +1,8 @@
 # Simple Peer
 
+[![npm version](https://badge.fury.io/js/@ffgflash%2Fsimple-peer.svg)](https://badge.fury.io/js/@ffgflash%2Fsimple-peer)
+![NPM Downloads](https://img.shields.io/npm/dt/%40ffgflash%2Fsimple-peer)
+
 - [Simple Peer](#simple-peer)
   - [The Goal](#the-goal)
   - [Documentation](#documentation)
