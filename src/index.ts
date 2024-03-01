@@ -22,9 +22,9 @@ export interface SimplePeerOptions {
    */
   rtc?: RTCConfiguration
   /**
-   * Configure how long we should wait before giving up on a failed connection.
+   * Configure how long to wait before closing the RTCPeerConnection.
    *
-   * If 0 is provided then never give up the connection.
+   * If 0 is provided then never close the connection.
    */
   timeout?: number
 }
@@ -257,7 +257,6 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
         this.#ignoringOffer =
           !this.#polite && signal.type === 'offer' && !this.readyForOffer
         if (this.#ignoringOffer) return
-        this.stopAnswerTimeout()
         this.#isSettingRemoteAnswerPending = signal.type === 'answer'
         await this.#pc.setRemoteDescription(signal)
         this.#isSettingRemoteAnswerPending = false
@@ -301,6 +300,8 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
 
   private handleConnectionStateChange(state: RTCPeerConnectionState) {
     this.emit('connection-state-change', state)
+    if (state === 'connected' || state === 'closed') return this.stopTimeout()
+    this.startTimeout()
   }
 
   private handleSignalingStateChange(state: RTCSignalingState) {
@@ -312,13 +313,13 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     })
   }
 
-  private startAnswerTimeout() {
-    this.stopAnswerTimeout()
+  private startTimeout() {
+    this.stopTimeout()
     if (!this.#options?.timeout) return
     this.#timeout = setTimeout(() => this.close(), this.#options.timeout)
   }
 
-  private stopAnswerTimeout() {
+  private stopTimeout() {
     if (!this.#timeout) return
     clearTimeout(this.#timeout)
     this.#timeout = undefined
@@ -335,7 +336,6 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       // if (!this.stable) return
       await this.#pc.setLocalDescription()
       this.sendSignal(this.#pc.localDescription!.toJSON())
-      this.startAnswerTimeout()
     } catch (err) {
       throw err
     } finally {
