@@ -1,6 +1,5 @@
 import debug from 'debug'
 import EventEmitter from 'eventemitter3'
-import { v4 } from 'uuid'
 
 const logSignaling = debug('simple-peer:signaling')
 const logEvents = debug('simple-peer:events')
@@ -28,14 +27,12 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
   #streams: Record<string, { name?: string; stream?: MediaStream }> = {}
   #streamQueue: { name: string; stream: MediaStream }[] = []
   #channelQueue: string[] = []
-  #id!: string
   #answerTimeout?: NodeJS.Timeout
   #polite = false
   #ignoringOffer = false
   #makingOffer = false
   #isSettingRemoteAnswerPending = false
   #options
-  static #idGenerator: (peer: SimplePeer) => string = () => v4()
 
   constructor(options?: SimplePeerOptions) {
     super()
@@ -59,17 +56,8 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.handleDataChannel(this.#pc.createDataChannel(label))
   }
 
-  get id() {
-    return this.#id
-  }
-
-  static setIDGenerator(generator: (peer: SimplePeer) => string) {
-    this.#idGenerator = generator
-  }
-
   open() {
     if (this.isOpen) return
-    this.#id = SimplePeer.#idGenerator(this)
     this.createConnection()
     this.emit('connection-state-change', this.#pc.connectionState)
     this.emit('signaling-state-change', this.#pc.signalingState)
@@ -241,10 +229,6 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
         this.handleClose()
         break
       }
-      case 'identifier': {
-        this.#id = signal.id
-        break
-      }
     }
   }
 
@@ -364,7 +348,6 @@ export type PeerSignal =
   | { type: 'candidate'; candidate: RTCIceCandidateInit }
   | { type: 'stream'; name: string; id: string }
   | { type: 'close' }
-  | { type: 'identifier'; id: string }
 
 export interface PeerEvents {
   'signal': (signal: PeerSignal) => void
