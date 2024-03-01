@@ -45,6 +45,6 @@
   "bugs": {
     "url": "https://github.com/FFGFlash/SimplePeer/issues"
   },
-  "homepage": "https://github.com/FFGFlash/SimplePeer#readme",
+  "homepage": "https://ffgflash.github.io/SimplePeer",
   "description": "A package for simplifying peer-2-peer communication."
 }
