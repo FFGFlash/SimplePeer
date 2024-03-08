@@ -314,8 +314,18 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
     this.emit('signaling-state-change', state)
     if (state !== 'stable') return
     dequeue(this.#streamQueue, ({ name, stream }) => {
-      logStreaming('<< %s (%s) dequeued', name, stream.id)
-      this.#addStream(name, stream)
+      try {
+        logStreaming('<< %s (%s) dequeued', name, stream.id)
+        this.#addStream(name, stream)
+      } catch (value) {
+        const err = ensureError(value)
+        logStreaming(
+          '<< %s (%s) failed to dequeue\n%s',
+          name,
+          stream.id,
+          err.stack
+        )
+      }
     })
   }
 
@@ -408,7 +418,12 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
         this.#addStream(name, stream)
       } catch (value) {
         const err = ensureError(value)
-        logStreaming('<< %s (%s) failed to dequeue\n%s', err.stack)
+        logStreaming(
+          '<< %s (%s) failed to dequeue\n%s',
+          name,
+          stream.id,
+          err.stack
+        )
       }
     })
     dequeue(this.#channelQueue, ({ label, dataChannelDict }) => {
