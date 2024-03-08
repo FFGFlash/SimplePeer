@@ -8,10 +8,12 @@ const logChannels = debug('simple-peer:channels')
 
 function dequeue<T>(
   array: T[],
-  callbackfn: (value: T, index: number, array: T[]) => void,
+  callbackfn?: (value: T, index: number, array: T[]) => void,
   thisArg?: any
 ) {
-  array.splice(0, array.length).forEach(callbackfn, thisArg)
+  const queue = array.splice(0, array.length)
+  if (callbackfn) queue.forEach(callbackfn, thisArg)
+  return queue
 }
 
 export interface SimplePeerOptions {
@@ -126,17 +128,21 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
    */
   addStream(name: string, stream: MediaStream) {
     if (!this.stable) {
+      const existingIndex = this.#streamQueue.findIndex(
+        item => item.stream.id === stream.id
+      )
       logStreaming('>> %s (%s) enqueued', name, stream.id)
-      this.#streamQueue.push({ name, stream })
+      if (!~existingIndex) this.#streamQueue.push({ name, stream })
+      else this.#streamQueue[existingIndex].name = name
       return
     }
     return this.#addStream(name, stream)
   }
 
   #addStream(name: string, stream: MediaStream) {
-    logStreaming('>> Added %s (%s)', name, stream.id)
     this.handleAddStream(stream, true)
     this.sendSignal({ type: 'stream', id: stream.id, name })
+    logStreaming('>> Added %s (%s)', name, stream.id)
   }
 
   /**
@@ -263,12 +269,12 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
         if (signal.type === 'offer') {
           await this.#pc.setLocalDescription()
           this.sendSignal(this.#pc.localDescription!.toJSON())
-          const candidates = this.#candidates.splice(0, this.#candidates.length)
-          for (const candidate of candidates) {
+          for (const candidate of dequeue(this.#candidates)) {
             try {
               await this.#pc.addIceCandidate(candidate)
-            } catch (err) {
-              if (!this.#ignoringOffer) throw err
+            } catch (value) {
+              if (this.#ignoringOffer) continue
+              throw ensureError(value)
             }
           }
         }
@@ -397,12 +403,22 @@ export default class SimplePeer extends EventEmitter<PeerEvents> {
       this.handleIceConnectionStateChange(peer.iceConnectionState)
 
     dequeue(this.#streamQueue, ({ name, stream }) => {
-      logStreaming('<< %s (%s) dequeued', name, stream.id)
-      this.#addStream(name, stream)
+      try {
+        logStreaming('<< %s (%s) dequeued', name, stream.id)
+        this.#addStream(name, stream)
+      } catch (value) {
+        const err = ensureError(value)
+        logStreaming('<< %s (%s) failed to dequeue\n%s', err.stack)
+      }
     })
     dequeue(this.#channelQueue, ({ label, dataChannelDict }) => {
-      logChannels('>> %s dequeued %o', label, dataChannelDict)
-      this.#createDataChannel(label, dataChannelDict)
+      try {
+        logChannels('>> %s dequeued %o', label, dataChannelDict)
+        this.#createDataChannel(label, dataChannelDict)
+      } catch (value) {
+        const err = ensureError(value)
+        logChannels('>> %s failed to dequeue\n%s', label, err.stack)
+      }
     })
   }
 }
@@ -463,4 +479,22 @@ export interface PeerEvents {
    * @returns
    */
   'ice-connection-state-change': (state: RTCIceConnectionState) => void
+}
+
+function ensureError(value: unknown): Error {
+  if (value instanceof Error) return value
+  return new ValueError(value)
+}
+
+class ValueError extends Error {
+  constructor(value: unknown) {
+    if (typeof value === 'string') super(value)
+    else {
+      let str = '[Failed to Stringify Value]'
+      try {
+        str = JSON.stringify(value)
+      } catch {}
+      super(str)
+    }
+  }
 }
